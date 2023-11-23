@@ -1,11 +1,38 @@
 library(shiny)
 library(rugarch)
+library(tidyverse)
 
 dados <- read.table("2004-2021.tsv", header = TRUE, sep = "\t")
+caminho_arquivo <- "2004-2021.tsv"
+dados_combustiveis <- read.delim(caminho_arquivo)
 
 ui <- fluidPage(
   tabsetPanel(
-    tabPanel("Parte 1", titlePanel("Parte 1")),
+    tabPanel("Dados de Combustíveis", 
+      titlePanel("Filtrar Dados de Combustíveis"),
+      sidebarLayout(
+        sidebarPanel(
+          selectizeInput("regioes", label = "Selecione uma ou mais regiões:",
+                         choices = unique(dados_combustiveis$REGIÃO), multiple = TRUE),
+          conditionalPanel(
+            condition = "input.regioes.length > 0",
+            selectizeInput("estados", label = "Selecione um ou mais estados:",
+                           choices = NULL, multiple = TRUE),
+            conditionalPanel(
+              condition = "input.estados.length > 0",
+              selectizeInput("produtos", label = "Selecione um ou mais produtos:",
+                             choices = NULL, multiple = TRUE),
+              actionButton("filtrar", "Filtrar")
+            )
+          )
+        ),
+        mainPanel(
+          tableOutput("tabela_filtrada")
+        )
+      )
+    ),
+    
+    tabPanel("Tab 2"),
 
     tabPanel("Modelo Preditivo",
       titlePanel("ARMA(p, q) - GARCH(1, 1)"),
@@ -60,7 +87,43 @@ overflow-y:scroll; max-height: 800px;}")),
 )
 
 server <- function(input, output, session) {
-
+  # Tab 1
+  observeEvent(input$regioes, {
+    dados_estados <- dados_combustiveis %>%
+      filter(REGIÃO %in% input$regioes) %>%
+      pull(ESTADO) %>%
+      unique()
+    
+    updateSelectizeInput(session, "estados", choices = dados_estados)
+  })
+  
+  observeEvent(input$estados, {
+    dados_produtos <- dados_combustiveis %>%
+      filter(ESTADO %in% input$estados) %>%
+      pull(PRODUTO) %>%
+      unique()
+    
+    updateSelectizeInput(session, "produtos", choices = dados_produtos)
+  })
+  
+  observeEvent(input$filtrar, {
+    regioes_selecionadas <- input$regioes
+    estados_selecionados <- input$estados
+    produtos_selecionados <- input$produtos
+    
+    dados_filtrados <- dados_combustiveis %>%
+      filter(REGIÃO %in% regioes_selecionadas) %>%
+      filter(ESTADO %in% estados_selecionados) %>%
+      filter(PRODUTO %in% produtos_selecionados)
+    
+    output$tabela_filtrada <- renderTable({
+      return(dados_filtrados)
+    })
+  })
+  
+  # Tab 2
+  
+  # Tab 3
   # Entrada
   output$escolhas_regiao <- renderUI({
     selectInput("regiao", "Região:", unique(dados$REGIÃO))
