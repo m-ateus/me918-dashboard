@@ -1,10 +1,63 @@
 library(shiny)
 library(rugarch)
 library(tidyverse)
+library(geobr)
+library(sf)
 
-dados <- read.table("2004-2021.tsv", header = TRUE, sep = "\t")
-caminho_arquivo <- "2004-2021.tsv"
+dados <- read.table(file.path("data", "2004-2021.tsv"), header = TRUE, sep = "\t")
+caminho_arquivo <- file.path("data", "2004-2021.tsv")
 dados_combustiveis <- read.delim(caminho_arquivo)
+data <- read_tsv(file.path("data", "2004-2021.tsv"))
+
+data$ESTADO = tolower(data$ESTADO)
+data = data %>%
+  mutate(ANO = year(`DATA FINAL`),
+         MES = month(`DATA FINAL`)) %>%
+  select(-`DATA INICIAL`,-`DATA FINAL`)
+data$PRODUTO = iconv(data$PRODUTO, from = 'UTF-8', to = 'ASCII//TRANSLIT')
+
+media_anual = tibble()
+for(i in 2004:2021) {
+  for (j in levels(as.factor(data$PRODUTO))) {
+    for (k in levels(as.factor(data$ESTADO))) {
+      media_anual= rbind(media_anual, c(i, j, k, NA))
+    }
+  }
+}
+rm(i)
+rm(j)
+rm(k)
+colnames(media_anual)<- c("ANO", "PRODUTO", "ESTADO", "VALOR")
+media_anual$ANO = as.integer(media_anual$ANO)
+
+media_anual = left_join(media_anual, data %>%
+                          group_by(ESTADO, ANO, PRODUTO) %>%
+                          select(`PREÇO MÉDIO REVENDA`, MES) %>%
+                          summarise(MEDIA = mean(`PREÇO MÉDIO REVENDA`)) %>%
+                          mutate(PRODUTO = as.factor(PRODUTO)),
+                        by = join_by(ANO, ESTADO, PRODUTO)) %>%
+  select(-VALOR)
+
+#Data base geobr
+states = read_state(year = 2010, showProgress = FALSE)
+states$name_state = tolower(iconv(states$name_state, from = 'UTF-8', to = 'ASCII//TRANSLIT'))
+
+#Juntando as bases
+media_anual = left_join(states, media_anual, by = join_by(name_state == ESTADO)) %>%
+  select(-abbrev_state, -code_state, -code_region, -name_region)
+
+
+#Função geradora do gráfico
+graf = function(ano, prod) {
+  media_anual %>% 
+    filter(ANO == ano, PRODUTO == prod) %>% ggplot() +
+    geom_sf(aes(fill = MEDIA)) +
+    labs(subtitle = paste0("Preço médio d", if_else(prod == "GASOLINA COMUM", "a ", "o "),
+                           tolower(prod), ", ", ano)) +
+    scale_fill_distiller(palette = "Blues", name = "Preço Médio Gasolina") +
+    theme(axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank()) +
+    theme_minimal()
+}
 
 ui <- fluidPage(
   tabsetPanel(
@@ -32,7 +85,22 @@ ui <- fluidPage(
       )
     ),
     
-    tabPanel("Tab 2"),
+    tabPanel("Infográfico",
+             #Title
+             titlePanel("Infográfico"),
+             
+             #Sidebar
+             sidebarLayout(
+               sidebarPanel(width = 2,
+                            uiOutput("escolha_combustivel"),
+                            uiOutput("escolha_ano")
+               ),
+               #Main panel
+               mainPanel(
+                 plotOutput("grafico")
+               )
+             )
+           ),
 
     tabPanel("Modelo Preditivo",
       titlePanel("ARMA(p, q) - GARCH(1, 1)"),
@@ -122,7 +190,18 @@ server <- function(input, output, session) {
   })
   
   # Tab 2
+  output$escolha_ano = renderUI({
+    selectInput("ano", "Ano: ", unique(media_anual$ANO))
+  })
+  output$escolha_combustivel = renderUI({
+    media_anual = media_anual %>%
+      filter(ANO == input$ano)
+    selectInput("combustivel", "Combustível:", unique(media_anual$PRODUTO))
+    })
   
+  
+  output$grafico = renderPlot(graf(input$ano, input$combustivel))
+    
   # Tab 3
   # Entrada
   output$escolhas_regiao <- renderUI({
